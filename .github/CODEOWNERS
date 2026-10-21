@@ -1,0 +1,6 @@
+# Replace @your-github-user with the admin(s) who approve engine and rule changes.
+# Turn on "Require review from Code Owners" in the main branch protection rule.
+*                    @your-github-user
+/engine/             @your-github-user
+/pipeline.json       @your-github-user
+/.github/            @your-github-user

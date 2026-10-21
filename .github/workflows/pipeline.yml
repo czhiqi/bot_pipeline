@@ -1,0 +1,58 @@
+name: strategy-pipeline
+
+# Runs the gates for every bot a strategy branch changes. The web app reads the
+# "pipeline-report" artifact. Submitted code runs here with read-only repo
+# access and no secrets: never add exchange keys to this workflow.
+on:
+  push:
+    branches: ["strategy/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Engine tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Find changed bots
+        id: bots
+        run: python -m engine.changed --base "origin/${{ github.base_ref || github.event.repository.default_branch }}" >> "$GITHUB_OUTPUT"
+
+      - name: Run gates
+        env:
+          BOTS: ${{ steps.bots.outputs.bots }}
+          OUTSIDE: ${{ steps.bots.outputs.outside }}
+        run: |
+          if [ -z "$BOTS" ]; then echo "No bot folders changed."; mkdir -p reports; echo '{}' > reports/none.json; exit 0; fi
+          python -m engine.pipeline --bots "$BOTS" --outside "$OUTSIDE" --out reports
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-report
+          path: reports/
+          retention-days: 30

@@ -1,0 +1,26 @@
+{
+  "name": "example-ema-flip",
+  "exchange": "bitget",
+  "symbol": "BTC/USDT:USDT",
+  "timeframe": "4h",
+  "lookback": 1000,
+  "leverage": 3,
+  "margin_mode": "isolated",
+  "params": {
+    "qty": 0.001,
+    "fast": 50,
+    "slow": 150,
+    "slope_bars": 5,
+    "direction": "long",
+    "trend_tf": ""
+  },
+  "risk": {
+    "stop_loss_pct": 5,
+    "max_position_qty": 0.001,
+    "max_entries": 1,
+    "daily_loss_limit_usdt": 0
+  },
+  "costs": { "taker_fee_pct": 0.06, "slippage_pct": 0.05 },
+  "backtest": { "months": 60, "start_equity": 1000 },
+  "live": { "poll_seconds": 15 }
+}

@@ -1,0 +1,16 @@
+{
+  "oos_fraction": 0.33,
+  "min_months": 6,
+  "min_trades": 30,
+  "min_trades_oos": 8,
+  "min_profit_factor_oos": 1.05,
+  "require_oos_profit": true,
+  "max_dd_pct_of_peak_margin": 60,
+  "max_leverage": 5,
+  "require_stop_loss": true,
+  "liq_buffer": 0.8,
+  "min_slippage_pct": 0.03,
+  "min_taker_fee_pct": 0.04,
+  "parity_candles": 1500,
+  "allowed_exchanges": ["bitget", "binance"]
+}
