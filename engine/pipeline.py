@@ -34,7 +34,7 @@ from .backtest import run as run_backtest
 from .backtest import summarize
 from .config import load_bot_config, load_pipeline_rules
 from .core import RiskGuard, SimBroker
-from .data import load_candles
+from .data import coverage, load_candles
 from .live import LiveRunner
 from .sandbox_check import check_source
 from .timeframes import tf_ms
@@ -136,7 +136,14 @@ def evaluate(bot_dir: Path, rules: dict, outside: list, allow_download: bool = T
     lb = int(cfg["lookback"])
     span_months = (candles[-1]["t"] - candles[0]["t"]) / (30.44 * 86_400_000) if candles else 0
     rep.d["data"] = {"source": source, "candles": len(candles), "from": candles[0]["t"] if candles else None, "to": candles[-1]["t"] if candles else None, "months": round(span_months, 1)}
-    if not g("data", len(candles) > lb + 50 and span_months >= rules["min_months"], f"{len(candles)} candles, {span_months:.1f} months ({source})", round(span_months, 1), rules["min_months"]):
+    cov = coverage(candles, cfg["timeframe"])
+    rep.d["data"]["coverage"] = round(cov, 4)
+    min_cov = float(rules.get("min_data_coverage", 0.98))
+    detail = f"{len(candles)} candles, {span_months:.1f} months ({source})"
+    if cov < min_cov:
+        detail = (f"{len(candles)} candles over {span_months:.1f} months is only {cov:.0%} of the {round(len(candles) / cov):,} expected: "
+                  f"the data has gaps. Download it again or upload a complete CSV ({source})")
+    if not g("data", len(candles) > lb + 50 and span_months >= rules["min_months"] and cov >= min_cov, detail, round(span_months, 1), rules["min_months"]):
         return finish()
 
     costs = {

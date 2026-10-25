@@ -58,6 +58,14 @@ def clean(candles: list) -> list:
     return [seen[t] for t in sorted(seen)]
 
 
+def coverage(candles: list, tf: str) -> float:
+    """Share of the expected candles between the first and last one that are present (1.0 = no gaps)."""
+    if len(candles) < 2:
+        return 1.0
+    expected = (candles[-1]["t"] - candles[0]["t"]) // tf_ms(tf) + 1
+    return len(candles) / expected
+
+
 def make_exchange(name: str, keys: dict | None = None):
     try:
         import ccxt  # imported lazily so backtests on local CSVs don't need it
@@ -72,6 +80,9 @@ def make_exchange(name: str, keys: dict | None = None):
 
 
 PAGE_PAUSE_SEC = 0.35  # between pages, on top of ccxt's own rate limiter
+# Candles per request. Bitget's history endpoint returns at most 200 and, when asked
+# for more, gives the LAST 200 of the window, which silently left 80% gaps.
+PAGE_LIMIT = {"bitget": 200, "binance": 1000}
 RETRIES = 8            # per page, on rate limits / network errors (waits 2, 4, 8 ... 60 s)
 
 
@@ -80,15 +91,20 @@ class DownloadError(Exception):
 
 
 def _fetch_page(ex, symbol: str, tf: str, since: int, limit: int, sleep=time.sleep) -> list:
-    import ccxt
+    try:
+        import ccxt
+
+        retryable, rate_limited = ccxt.NetworkError, ccxt.DDoSProtection
+    except ImportError:  # tests with a stand-in exchange
+        retryable, rate_limited = ConnectionError, ConnectionRefusedError
 
     delay = 2.0
     for attempt in range(1, RETRIES + 1):
         try:
             return ex.fetch_ohlcv(symbol, tf, since=since, limit=limit)
-        except ccxt.NetworkError as e:  # includes DDoSProtection / RateLimitExceeded (HTTP 429) and timeouts
+        except retryable as e:  # includes DDoSProtection / RateLimitExceeded (HTTP 429) and timeouts
             if attempt == RETRIES:
-                kind = "rate limit (too many requests)" if isinstance(e, ccxt.DDoSProtection) else "network error"
+                kind = "rate limit (too many requests)" if isinstance(e, rate_limited) else "network error"
                 raise DownloadError(
                     f"{ex.id} {kind} after {RETRIES} tries. Wait a few minutes and try again, "
                     f"or upload a candle CSV instead. Last error: {str(e)[:200]}"
@@ -109,13 +125,15 @@ def download(exchange: str, symbol: str, tf: str, since_ms: int, until_ms: int |
     while cursor < until_ms:
         if pages:
             sleep(PAGE_PAUSE_SEC)
-        rows = _fetch_page(ex, symbol, tf, cursor, 1000, sleep)
+        rows = _fetch_page(ex, symbol, tf, cursor, PAGE_LIMIT.get(exchange, 200), sleep)
         pages += 1
         if not rows:
             break
         for t, o, h, l, c, v in rows:
             if t + step <= until_ms:  # closed candles only
                 out.append({"t": int(t), "o": o, "h": h, "l": l, "c": c, "v": v or 0.0})
+        if out and pages > 1 and int(rows[0][0]) > cursor + step:
+            print(f"{exchange}: warning, page starting {cursor} came back from {int(rows[0][0])} (gap)", flush=True)
         nxt = int(rows[-1][0]) + step
         if nxt <= cursor:
             break
@@ -158,6 +176,9 @@ def main() -> None:
         raise SystemExit(f"Download failed: {e}") from None
     if not candles:
         raise SystemExit(f"Download failed: {a.exchange} returned no candles for {a.symbol} {a.tf}.")
+    cov = coverage(candles, a.tf)
+    if cov < 0.98:
+        raise SystemExit(f"Download failed: {a.exchange} data has gaps ({len(candles)} candles, {cov:.0%} of the expected count).")
     path = data_path(a.exchange, a.symbol, a.tf)
     write_csv(path, candles)
     print(f"Wrote {len(candles)} candles to {path}")

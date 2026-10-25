@@ -32,6 +32,7 @@ BOT_DEFAULTS = {
 PIPELINE_DEFAULTS = {
     "oos_fraction": 0.33,  # last third of the data is out-of-sample
     "min_months": 6,
+    "min_data_coverage": 0.98,
     "min_trades": 30,
     "min_trades_oos": 8,
     "min_profit_factor_oos": 1.05,

@@ -235,6 +235,77 @@ class TestParity(unittest.TestCase):
         self.assertEqual(g["data"]["status"], "skip")
 
 
+class BitgetLike:
+    """Bitget's history endpoint: at most 200 candles, and the LAST 200 of the asked window."""
+
+    id = "bitget"
+
+    def __init__(self, candles):
+        self.candles = candles
+        self.calls = 0
+
+    def fetch_ohlcv(self, symbol, tf, since, limit):
+        self.calls += 1
+        end = since + limit * 3_600_000
+        rows = [[c["t"], c["o"], c["h"], c["l"], c["c"], c["v"]] for c in self.candles if since <= c["t"] < end]
+        return rows[-200:]
+
+
+class TestData(unittest.TestCase):
+    def test_bitget_download_has_no_gaps(self):
+        from engine import data
+
+        src = synthetic(5000, seed=5)
+        got = data.download("bitget", "ETH/USDT:USDT", "1h", src[0]["t"], src[-1]["t"] + 3_600_000, ex=BitgetLike(src), sleep=lambda s: None)
+        self.assertEqual(len(got), 5000)
+        self.assertEqual(data.coverage(got, "1h"), 1.0)
+        # what the old 1000-candle pages produced against the same endpoint
+        old = dict(data.PAGE_LIMIT)
+        try:
+            data.PAGE_LIMIT["bitget"] = 1000
+            gappy = data.download("bitget", "ETH/USDT:USDT", "1h", src[0]["t"], src[-1]["t"] + 3_600_000, ex=BitgetLike(src), sleep=lambda s: None)
+        finally:
+            data.PAGE_LIMIT.clear()
+            data.PAGE_LIMIT.update(old)
+        self.assertLess(data.coverage(gappy, "1h"), 0.3)
+
+    def test_rate_limit_retries(self):
+        from engine import data
+
+        src = synthetic(1000, seed=6)
+        ex = BitgetLike(src)
+        real, fails = ex.fetch_ohlcv, {"n": 0}
+
+        def flaky(*a, **k):
+            if fails["n"] < 2:
+                fails["n"] += 1
+                raise ConnectionRefusedError("429 Too Many Requests")
+            return real(*a, **k)
+
+        ex.fetch_ohlcv = flaky
+        waits = []
+        got = data.download("bitget", "X", "1h", src[0]["t"], src[-1]["t"] + 3_600_000, ex=ex, sleep=waits.append)
+        self.assertEqual(len(got), 1000)
+        self.assertEqual([w for w in waits if w >= 2], [2.0, 4.0])
+
+
+class TestDataGate(unittest.TestCase):
+    setUp, tearDown, _bot = TestParity.setUp, TestParity.tearDown, TestParity._bot
+
+    def test_data_gate_rejects_gaps(self):
+        d = self._bot((EXAMPLE / "strategy.py").read_text(), {"timeframe": "1h", "lookback": 400, "params": {"qty": 0.001, "fast": 20, "slow": 50, "slope_bars": 3, "direction": "auto", "trend_tf": ""}, "backtest": {"months": 24, "start_equity": 1000}})
+        cfg = load_bot_config(d)
+        root = self.tmp / "data"
+        full = synthetic(17000, seed=12)
+        gappy = [c for i, c in enumerate(full) if i % 1000 >= 800]  # 200 of every 1000, like the old Bitget download
+        write_csv(data_path(cfg["exchange"], cfg["symbol"], cfg["timeframe"], root), gappy)
+        r = evaluate(d, dict(PIPELINE_DEFAULTS, parity_candles=800), [], allow_download=False, data_root=root)
+        g = {x["id"]: x for x in r["gates"]}
+        self.assertEqual(g["data"]["status"], "fail")
+        self.assertIn("gaps", g["data"]["detail"])
+        self.assertEqual(g["backtest"]["status"], "skip")
+
+
 class TestLiveRunnerRestart(unittest.TestCase):
     def test_restart_keeps_paper_position(self):
         tmp = Path(tempfile.mkdtemp())

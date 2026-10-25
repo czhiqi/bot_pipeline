@@ -1,6 +1,7 @@
 {
   "oos_fraction": 0.33,
   "min_months": 6,
+  "min_data_coverage": 0.98,
   "min_trades": 30,
   "min_trades_oos": 8,
   "min_profit_factor_oos": 1.05,
