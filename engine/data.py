@@ -71,14 +71,46 @@ def make_exchange(name: str, keys: dict | None = None):
     return cls(opts)
 
 
-def download(exchange: str, symbol: str, tf: str, since_ms: int, until_ms: int | None = None) -> list:
-    ex = make_exchange(exchange)
+PAGE_PAUSE_SEC = 0.35  # between pages, on top of ccxt's own rate limiter
+RETRIES = 8            # per page, on rate limits / network errors (waits 2, 4, 8 ... 60 s)
+
+
+class DownloadError(Exception):
+    pass
+
+
+def _fetch_page(ex, symbol: str, tf: str, since: int, limit: int, sleep=time.sleep) -> list:
+    import ccxt
+
+    delay = 2.0
+    for attempt in range(1, RETRIES + 1):
+        try:
+            return ex.fetch_ohlcv(symbol, tf, since=since, limit=limit)
+        except ccxt.NetworkError as e:  # includes DDoSProtection / RateLimitExceeded (HTTP 429) and timeouts
+            if attempt == RETRIES:
+                kind = "rate limit (too many requests)" if isinstance(e, ccxt.DDoSProtection) else "network error"
+                raise DownloadError(
+                    f"{ex.id} {kind} after {RETRIES} tries. Wait a few minutes and try again, "
+                    f"or upload a candle CSV instead. Last error: {str(e)[:200]}"
+                ) from None
+            print(f"{ex.id}: {type(e).__name__}, waiting {delay:.0f}s (try {attempt}/{RETRIES})", flush=True)
+            sleep(delay)
+            delay = min(delay * 2, 60.0)
+    return []
+
+
+def download(exchange: str, symbol: str, tf: str, since_ms: int, until_ms: int | None = None, ex=None, sleep=time.sleep) -> list:
+    ex = ex or make_exchange(exchange)
     step = tf_ms(tf)
     until_ms = until_ms or int(time.time() * 1000)
     out = []
     cursor = since_ms
+    pages = 0
     while cursor < until_ms:
-        rows = ex.fetch_ohlcv(symbol, tf, since=cursor, limit=1000)
+        if pages:
+            sleep(PAGE_PAUSE_SEC)
+        rows = _fetch_page(ex, symbol, tf, cursor, 1000, sleep)
+        pages += 1
         if not rows:
             break
         for t, o, h, l, c, v in rows:
@@ -88,6 +120,8 @@ def download(exchange: str, symbol: str, tf: str, since_ms: int, until_ms: int |
         if nxt <= cursor:
             break
         cursor = nxt
+        if pages % 20 == 0:
+            print(f"{exchange}: {len(out)} candles so far", flush=True)
     return clean(out)
 
 
@@ -118,7 +152,12 @@ def main() -> None:
     f.add_argument("--months", type=float, default=24)
     a = ap.parse_args()
     now = int(time.time() * 1000)
-    candles = download(a.exchange, a.symbol, a.tf, now - int(a.months * 30.44 * 86_400_000), now)
+    try:
+        candles = download(a.exchange, a.symbol, a.tf, now - int(a.months * 30.44 * 86_400_000), now)
+    except DownloadError as e:
+        raise SystemExit(f"Download failed: {e}") from None
+    if not candles:
+        raise SystemExit(f"Download failed: {a.exchange} returned no candles for {a.symbol} {a.tf}.")
     path = data_path(a.exchange, a.symbol, a.tf)
     write_csv(path, candles)
     print(f"Wrote {len(candles)} candles to {path}")
