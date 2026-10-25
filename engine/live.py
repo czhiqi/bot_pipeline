@@ -18,7 +18,7 @@ import os
 import time
 from pathlib import Path
 
-from .core import Engine, RiskGuard, SimBroker, stop_price
+from .core import Engine, RiskGuard, SimBroker, stop_price, target_price
 from .loader import build_strategy
 from .strategy import Position
 from .timeframes import tf_ms
@@ -119,6 +119,8 @@ class CcxtBroker:
         self.last_price = 0.0
         self.stop_id = None
         self.stop_at = None
+        self.tp_id = None
+        self.tp_at = None
         self.day_pnl: dict = {}
         self.ex.load_markets()
         self.market = self.ex.market(self.symbol)
@@ -165,13 +167,16 @@ class CcxtBroker:
         self.ensure_stop()
 
     def tick(self, price: float) -> None:
-        """Backup software stop, checked on every poll."""
+        """Backup software stop and take-profit, checked on every poll."""
         sp = stop_price(self.pos, self.risk.stop_loss_pct)
-        if sp is None:
-            return
-        if (self.pos.side == "long" and price <= sp) or (self.pos.side == "short" and price >= sp):
+        if sp is not None and ((self.pos.side == "long" and price <= sp) or (self.pos.side == "short" and price >= sp)):
             log.warning("Price %.6g crossed the stop %.6g; closing at market", price, sp)
             self._close_all("software stop")
+            return
+        tp = target_price(self.pos, self.risk.take_profit_pct)
+        if tp is not None and ((self.pos.side == "long" and price >= tp) or (self.pos.side == "short" and price <= tp)):
+            log.info("Price %.6g reached the take-profit %.6g; closing at market", price, tp)
+            self._close_all("software take-profit")
 
     def submit(self, orders: list, candle: dict) -> None:
         for o in orders:
@@ -208,31 +213,44 @@ class CcxtBroker:
         self.sync()
 
     def ensure_stop(self) -> None:
-        sp = stop_price(self.pos, self.risk.stop_loss_pct)
-        if sp is None:
-            self.cancel_stop()
+        """Reduce-only stop-loss and take-profit orders on the exchange that
+        match the current position (re-placed when size or average changes)."""
+        self._ensure_trigger("stop", stop_price(self.pos, self.risk.stop_loss_pct), "stopLossPrice")
+        self._ensure_trigger("tp", target_price(self.pos, self.risk.take_profit_pct), "takeProfitPrice")
+
+    def _ensure_trigger(self, kind: str, price, param: str) -> None:
+        if price is None:
+            self._cancel_trigger(kind)
             return
-        sp = float(self.ex.price_to_precision(self.symbol, sp))
-        if self.stop_id and self.stop_at == (sp, self.pos.qty):
+        price = float(self.ex.price_to_precision(self.symbol, price))
+        if getattr(self, f"{kind}_id") and getattr(self, f"{kind}_at") == (price, self.pos.qty):
             return
-        self.cancel_stop()
+        self._cancel_trigger(kind)
         side = "sell" if self.pos.side == "long" else "buy"
         amount = float(self.ex.amount_to_precision(self.symbol, self.pos.qty / self.contract_size))
+        label = "Stop-loss" if kind == "stop" else "Take-profit"
         try:
-            o = self.ex.create_order(self.symbol, "market", side, amount, None, {"stopLossPrice": sp, "reduceOnly": True})
-            self.stop_id, self.stop_at = o.get("id"), (sp, self.pos.qty)
-            log.info("Stop-loss placed at %s", sp)
+            o = self.ex.create_order(self.symbol, "market", side, amount, None, {param: price, "reduceOnly": True})
+            setattr(self, f"{kind}_id", o.get("id"))
+            setattr(self, f"{kind}_at", (price, self.pos.qty))
+            log.info("%s placed at %s", label, price)
         except Exception as e:
-            log.error("Could not place the exchange stop (%s). The software stop is still active.", e)
+            log.error("Could not place the exchange %s (%s). The software check is still active.", label.lower(), e)
 
     def cancel_stop(self) -> None:
-        if not self.stop_id:
+        self._cancel_trigger("stop")
+        self._cancel_trigger("tp")
+
+    def _cancel_trigger(self, kind: str) -> None:
+        oid = getattr(self, f"{kind}_id")
+        if not oid:
             return
         try:
-            self.ex.cancel_order(self.stop_id, self.symbol, {"stop": True, "trigger": True})
+            self.ex.cancel_order(oid, self.symbol, {"stop": True, "trigger": True})
         except Exception as e:
-            log.info("cancel stop: %s", e)
-        self.stop_id = self.stop_at = None
+            log.info("cancel %s: %s", kind, e)
+        setattr(self, f"{kind}_id", None)
+        setattr(self, f"{kind}_at", None)
 
 
 def fetch_recent(ex, symbol: str, tf: str, n: int) -> list:

@@ -26,9 +26,17 @@ def stop_price(pos: Position, stop_loss_pct: float):
     return pos.avg_price * (1 - f) if pos.side == "long" else pos.avg_price * (1 + f)
 
 
+def target_price(pos: Position, take_profit_pct: float):
+    if pos.is_flat or take_profit_pct <= 0:
+        return None
+    f = take_profit_pct / 100
+    return pos.avg_price * (1 + f) if pos.side == "long" else pos.avg_price * (1 - f)
+
+
 class RiskGuard:
     def __init__(self, risk: dict):
         self.stop_loss_pct = float(risk.get("stop_loss_pct", 0) or 0)
+        self.take_profit_pct = float(risk.get("take_profit_pct", 0) or 0)
         self.max_qty = float(risk["max_position_qty"])
         self.max_entries = int(risk.get("max_entries", 1) or 1)
         self.daily_limit = float(risk.get("daily_loss_limit_usdt", 0) or 0)
@@ -111,12 +119,21 @@ class SimBroker:
             for o in self.pending:
                 self._execute(o, c["o"], c["t"])
             self.pending = []
+        # Stop first: when stop and target are both touched in one candle the
+        # order inside the candle is unknown, so assume the worse (same rule as
+        # the research lab's _apply_stops()).
         sp = stop_price(self.pos, self.risk.stop_loss_pct)
         if sp is not None:
             if self.pos.side == "long" and c["l"] <= sp:
                 self._close(min(c["o"], sp), c["t"], "stop-loss")
             elif self.pos.side == "short" and c["h"] >= sp:
                 self._close(max(c["o"], sp), c["t"], "stop-loss")
+        tp = target_price(self.pos, self.risk.take_profit_pct)
+        if tp is not None:
+            if self.pos.side == "long" and c["h"] >= tp:
+                self._close(max(c["o"], tp), c["t"], "take-profit")
+            elif self.pos.side == "short" and c["l"] <= tp:
+                self._close(min(c["o"], tp), c["t"], "take-profit")
         self.last_price = c["c"]
         eq = self.equity()
         self.peak_equity = max(self.peak_equity, eq)

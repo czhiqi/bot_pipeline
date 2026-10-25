@@ -19,6 +19,7 @@ BOT_DEFAULTS = {
     "params": {"qty": 0.02},
     "risk": {
         "stop_loss_pct": 4.0,  # % price move against the average entry; 0 = none (fails the gate)
+        "take_profit_pct": 0,  # % price move in favour of the average entry; 0 = none
         "max_position_qty": 0.1,  # hard cap on position size, base units
         "max_entries": 3,  # first entry + adds
         "daily_loss_limit_usdt": 0,  # 0 = off; blocks new entries for the rest of the UTC day

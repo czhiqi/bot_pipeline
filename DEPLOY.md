@@ -57,6 +57,6 @@ Windows: Task Scheduler → "At startup" → `python run_bot.py bots/<name>` wit
 
 1. Copy this folder into your GitHub repo (default branch `main`).
 2. Edit `.github/CODEOWNERS` with your GitHub username.
-3. Settings → Branches → protect `main`: require a pull request, the `gates` status check, and Code Owner review.
+3. Settings → Branches → protect `main`: require a pull request and Code Owner review. Require the `gates` status check **only** when the gates run on GitHub (`GATES_RUNNER=github`); while they run on the Forge server there is no such check and merges would be blocked.
 4. Settings → Actions → General: "Read repository contents" for the workflow token. Don't add exchange keys as secrets.
 5. Commit candle files under `data/` if CI can't download them. Binance blocks some cloud regions; generate them locally with `python -m engine.data fetch …`.

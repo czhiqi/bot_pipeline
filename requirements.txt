@@ -1,1 +1,4 @@
 ccxt>=4.4
+# research-lab strategies (engine/signal_adapter.py, engine/lab/)
+pandas>=2.2
+numpy>=1.26

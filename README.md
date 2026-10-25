@@ -14,6 +14,8 @@ engine/            shared engine (admin-owned, protected by CODEOWNERS)
   pipeline.py      the gates; writes reports/<name>/report.json
   data.py          candles: data/*.csv or ccxt download
   sandbox_check.py static check for submitted code
+  signal_adapter.py research-lab strategies (build_signal) as bots
+  lab/             vendored lab primitives, templates and signal code
 bots/<name>/       strategy.py · config.json · hypothesis.md
 pipeline.json      gate thresholds (admin-owned)
 run_bot.py         python run_bot.py bots/<name>
@@ -69,6 +71,23 @@ class MyIdea(Strategy):
 `ctx` gives `candles` (closed, oldest first, at most `lookback`), `position` (side, qty, avg_price, entries, `pnl_pct(price)`), `params`, `equity`, `state` (your scratch dict, saved across restarts), and `ema/ema_prev/rsi/atr(period, tf)`.
 
 Stops, size caps, max entries, the daily loss limit and the kill switch come from `config.json` → `risk`. The engine enforces them, so the strategy doesn't have to.
+
+## Research-lab strategies (from the Research tab)
+
+A strategy researched in the lab (`/lab` in the web app) is deployed **unchanged**: its file goes into `bots/<name>/strategy.py` and the loader wraps it in `engine/signal_adapter.py`. Its `from tool.engine import ...` line resolves to `engine/lab/`, the lab's primitives, templates and signal code copied verbatim.
+
+- Every closed candle, the lab's own signal code turns the candle window into its target position (+1 / -1 / 0), including warmup gating, the forward-filled state machine and the `build_regime` overlay. `lag` works as in the lab.
+- `risk.stop_loss_pct` / `risk.take_profit_pct` and `params.signal.max_hold` exit like the lab's `_apply_stops()`: stop wins over target in the same candle, and after any of them the bot stays out until the signal changes.
+- `tests/test_signal_adapter.py` checks bar by bar that the bot holds the same position the lab's engine computes, for long-only, long/short, edge-form, regime, stop, target and max-hold cases.
+- The backtest computes the signal once over the whole history; the live bot recomputes it on its `lookback` window. **Live = backtest** therefore also catches look-ahead (e.g. `.shift(-1)`) and strategies that depend on all history (`.expanding()`); raise `lookback` for the latter.
+- Only `DATASET = []` strategies can be deployed: a bot only gets exchange OHLCV, not the lab's feature datasets.
+- Not identical to the lab's report numbers: Forge fills at the next open with its own fees and slippage on the exchange's perpetual market, where the lab books closes on its uploaded (usually spot) data. The gates re-test it on Forge's terms.
+
+```json
+"params": {"qty": 0.001, "mode": "long_short", "lag": 1, "on_missing_data": "hold",
+           "signal": {"window": 20, "threshold": 1.0, "max_hold": 0},
+           "regime": {"regime_window": 60}}
+```
 
 ## Local commands
 

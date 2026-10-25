@@ -118,5 +118,12 @@ class Strategy:
         """Closed candles needed before on_candle() is first called."""
         return 1
 
+    def prepare(self, candles: list) -> None:
+        """Backtest only, optional: called once with the whole history before
+        the replay starts, so a strategy can precompute instead of recomputing
+        on every candle. The live bot never calls it, and the parity gate
+        replays the live path, so a precomputation that differs from what the
+        strategy computes live (look-ahead, too-short lookback) fails there."""
+
     def on_candle(self, ctx: Context) -> list:
         raise NotImplementedError

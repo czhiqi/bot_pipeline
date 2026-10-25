@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 import traceback
 from pathlib import Path
@@ -50,10 +51,17 @@ class Report:
         self.d["gates"].append({"id": gid, "label": label, "status": "pass" if ok else "fail", "detail": detail, "value": value, "limit": limit})
         if not ok:
             self.failed = True
+        _progress(gid, "pass" if ok else "fail")
         return ok
 
     def skip(self, gid: str, label: str) -> None:
         self.d["gates"].append({"id": gid, "label": label, "status": "skip", "detail": "skipped after an earlier failure"})
+        _progress(gid, "skip")
+
+
+def _progress(gid: str, status: str) -> None:
+    """One line per finished gate on stderr, so a caller can show live progress."""
+    print(f"::gate::{gid}::{status}", file=sys.stderr, flush=True)
 
 
 GATE_ORDER = [

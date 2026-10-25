@@ -22,6 +22,7 @@ def run(bot_dir: str, cfg: dict, candles: list, costs: dict | None = None) -> di
     if int(strategy.warmup()) > lb:
         raise ValueError(f"strategy warmup ({strategy.warmup()}) is longer than lookback ({lb})")
     # Same start as a live bot: `lookback` candles of history, then trade candle by candle.
+    strategy.prepare(candles)
     engine.warm(candles[:lb])
     for c in candles[lb:]:
         engine.on_closed_candle(c)
@@ -48,6 +49,7 @@ def summarize(trades: list, max_dd: float | None = None) -> dict:
         "max_drawdown": round(max_dd if max_dd is not None else dd, 4),
         "fees": round(sum(t["fees"] for t in trades), 4),
         "stop_losses": sum(1 for t in trades if t["reason"] == "stop-loss"),
+        "take_profits": sum(1 for t in trades if t["reason"] == "take-profit"),
     }
 
 

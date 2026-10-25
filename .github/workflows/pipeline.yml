@@ -3,11 +3,14 @@ name: strategy-pipeline
 # Runs the gates for every bot a strategy branch changes. The web app reads the
 # "pipeline-report" artifact. Submitted code runs here with read-only repo
 # access and no secrets: never add exchange keys to this workflow.
+# OFF for now: the gates run on the Forge server (web/.env GATES_RUNNER=local).
+# Runs only when started by hand (Actions tab -> strategy-pipeline -> Run workflow).
+# To turn GitHub gates back on, restore these triggers and set GATES_RUNNER=github:
+#   push:
+#     branches: ["strategy/**"]
+#   pull_request:
+#     branches: [main]
 on:
-  push:
-    branches: ["strategy/**"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
